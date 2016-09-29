@@ -11,7 +11,6 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <libgen.h>
 #include <curl/curl.h>
 
 #define READ 0
@@ -97,12 +96,12 @@ void producer(int fd[2], int qtd) {
         sleep( rand() % 5 );
         
         //Initialize the struct that will retrieve the data
-        DTModel dataWritten;
-        initData(&dataWritten);
+        DTModel data;
+        initData(&data);
 
         
         //Logic to create the e-mail file
-        printf("Produtor inseriu o e-mail %d no pipe.\n", dataWritten.index);
+        printf("\nProdutor inseriu o e-mail %d no pipe.\n", data.index);
         
         //Pass the url to the CURL
         curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -112,7 +111,7 @@ void producer(int fd[2], int qtd) {
         
         
         //Write the data in the struct created
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &dataWritten);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
 
         //Perform the query
         res = curl_easy_perform(curl);
@@ -121,9 +120,12 @@ void producer(int fd[2], int qtd) {
         //printf("%s\n", data.ptr);
         
         /* escreve no pipe */
-        //bytesEscritos = write(fd[WRITE], data.ptr, (strlen(data.ptr)+1));
+        bytesEscritos = write(fd[WRITE], &data, sizeof(DTModel));
+        bytesEscritos = write(fd[WRITE], data.ptr, (strlen(data.ptr)+1));
         
-        bytesEscritos = write(fd[WRITE], &dataWritten, sizeof(struct DataModel));
+        printf("     - Produtor escreveu os dados do e-mail no pipe.\n");
+        
+        //bytesEscritos = write(fd[WRITE], &dataWritten, sizeof(DTModel));
         
         if (bytesEscritos == -1) {
             perror("Erro de escrita no pipe!");
@@ -134,7 +136,7 @@ void producer(int fd[2], int qtd) {
             fprintf(stderr, "curl_easy_perform() failed: %s\n",
                     curl_easy_strerror(res));
         
-       // free(data.ptr);
+        free(data.ptr);
         
     }
     close (fd[WRITE]);
@@ -145,24 +147,26 @@ void consumer(int fd[2]){
     
     int counter = 1;
     char filename[200];
-    char email[100000];
+    char email[1000000];
     
     int bytesLidos;
     
     while (TRUE) {
         
-        DTModel dataReturned;
+        DTModel data;
+        initData(&data);
         
         /* lê do pipe */
-        //bytesLidos = read (fd[READ], email, sizeof(email));
-        bytesLidos = read (fd[READ], &dataReturned, sizeof(struct DataModel));
-        
-        printf("LEU DO PIPE:\n %s\n", dataReturned.ptr);
+        bytesLidos = read (fd[READ], &data, sizeof(DTModel));
+        bytesLidos = read (fd[READ], email, sizeof(email));
 
+
+        //bytesLidos = read (fd[READ], &dataReturned, sizeof(struct DataModel));
+    
         sleep( rand() % 5 );
         
-        //Logica para consumir o valor do buffer
-        printf("Consumidor pegou o e-mail %d do pipe.\n", dataReturned.index);
+        //Logic to consume the value from buffer
+        printf("\n\nConsumidor pegou o e-mail %d do pipe.\n", data.index);
         
         //Set the filename
         snprintf(filename, FILENAME ,"email%d.txt", counter);
@@ -175,19 +179,17 @@ void consumer(int fd[2]){
         FILE* file = fopen( filename, "w");
         
         if(file != NULL){
-            printf("Entrou no teste da abertura do arquivo\n");
+            printf("     - Consumidor criou  arquivo!\n");
             
             fputs("E-mail", file);
-            fprintf(file, "%d", dataReturned.index);
+            fprintf(file, "%d", data.index);
             fputs("\n", file);
-            //fputs(email, file);
-            fputs(dataReturned.ptr, file);
+            fputs(email, file);
+            //fputs(data.ptr, file);
             fclose(file);
         }
         
-        printf("Criou arquivo\n");
-        
-        //printf("Conteudo: %s", data.ptr);
+        printf("     - Consumidor salvou os dados no arquivo!\n");
         
         if (bytesLidos == -1) {
             perror("Erro de leitura no pipe!");
@@ -215,7 +217,7 @@ int main (int argc, char** argv){
         /* Create Pipe  */
         pipe (fd);
         
-        printf("CURL OK!");
+        printf("\n");
         
         printf("Digite seu login\n");
         scanf("%s", login);
@@ -229,6 +231,7 @@ int main (int argc, char** argv){
         
         curl_easy_setopt(curl, CURLOPT_USERNAME, login);
         curl_easy_setopt(curl, CURLOPT_PASSWORD, senha);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
         
         
         /* Create new Process */
