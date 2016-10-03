@@ -2,7 +2,7 @@
  UNIVERSIDADE FEDERAL DA BAHIA
  Trabalho de Sistemas Operacionais
  Professor: Ricardo Rios
- Alunos: Tácio Belmonte e Marivaldo
+ Alunos: Tácio Belmonte e Marivaldo Júnior
  */
 
 #include<stdlib.h>
@@ -15,14 +15,14 @@
 #include<semaphore.h>
 #include <curl/curl.h>
 
-#define buffer_size 10  //////
+#define buffer_size 10
 #define FILENAME 200
 
 typedef struct DataModel {
-    int index;
     char *ptr;
     size_t len;
 }DTModel;
+
 
 //Global Variables
 int indeX = 0;
@@ -36,16 +36,15 @@ int buffer[buffer_size]; // regiao critica
 int bufferCounter = 0;
 int flag = 1;
 
-//definicao de funcoes
+//Definição de Funções
 void produtor(void *n);
 void consumidor(void *n);
 void initData(DTModel *s);
 
-//definicao dos semaforos 
+//Definição dos Semáforos
 sem_t vazio;
 sem_t cheio;
 sem_t mutex;
-
 
 void imprimeBuffer(){
 
@@ -126,8 +125,8 @@ void consumidor(void *n){
     
 	while( 1 ){
         
-		sem_wait(&cheio);  //down em vazio
-		sem_wait(&mutex);    //down em mutex para bloquear regiao critica
+		sem_wait(&cheio);       //down em vazio
+		sem_wait(&mutex);       //down em mutex para bloquear regiao critica
         
         /*REGIAO CRITICA*/
 		
@@ -140,24 +139,23 @@ void consumidor(void *n){
             buffer[bufferCounter] = 0;
             totalConsumidos--;
         
-        printf("\n");
-        imprimeBuffer();
+            printf("\n");
+            imprimeBuffer();
+        
             printf("------CONSUMIDOR------\n");
         
         /*REGIAO CRITICA*/
         
 		sem_post(&mutex);
 		sem_post(&vazio);
-		
         
         //Recupera o e-mail via IMAP com o id que foi recuperado do buffer
         char url[100]= "imaps://imap.gmail.com:993/INBOX/;UID=";
         sprintf(emailID, "%d", item); //Transforma o int em char
-        strcat(url, emailID);
+        strcat(url, emailID); //Concatena para forma a URL
         
         DTModel data;
         initData(&data); // Inicia a struct que vai receber os dados
-        
         
         //Passa url montada para o curl
         curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -165,27 +163,28 @@ void consumidor(void *n){
         //Define a funcao que vai receber os dados
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, getData);
         
-        
         //Escreve os dados na struct
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
         
         //Realiza a operação
         res = curl_easy_perform(curl);
         
+        //Checa se o retorno da operacao foi 1
         if((int)res == CURLE_OK){
             
             char filename[200];
             
-            //Set the filename
+            //Define o nome do arquivo
             snprintf(filename, FILENAME ,"email%d.txt", item);
             
-            //To be ensure that the filename will skip the terminator char.
+            // Certifica-se que o nome do arquivo ira escapar o simbolo de finalizacao
             filename[FILENAME-1]=0;
             
-            //Open file
+            //Abre arquivo
             FILE* file = fopen( filename, "w");
             
             if(file != NULL){
+                //Insere conteudo no arquivo
                 printf("     - Consumidor criou  arquivo!\n");
                 fputs("E-mail:", file);
                 fputs(emailID, file);
@@ -193,10 +192,9 @@ void consumidor(void *n){
                 fputs(data.ptr, file);
                 fclose(file);
             }
-            
         }
         
-        
+        //Interrompe execucao caso o total de consumidos seja menor ou igual a zero (Previnir que o programa rode infinitamente)
         if(totalConsumidos <= 0){
             exit(0);
         }
@@ -206,11 +204,7 @@ void consumidor(void *n){
 
 void initData(DTModel *s) {
     
-    indeX++;
-    
     s->len = 0;
-    s->index = indeX;
-
     s->ptr = malloc(s->len+1);
     
     if (s->ptr == NULL) {
@@ -222,6 +216,7 @@ void initData(DTModel *s) {
     
     s->ptr[0] = '\0';
 }
+
 
 int main(){
     char login[100];
