@@ -5,23 +5,18 @@
  Alunos: Tácio Belmonte e Marivaldo
  */
 
-#include <unistd.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include<stdlib.h>
+#include<stdio.h>
+#include<unistd.h>
 #include <string.h>
+#include<pthread.h>
 #include <sys/types.h>
-#include <sys/stat.h>
+#include<sys/ipc.h>
+#include<semaphore.h>
 #include <curl/curl.h>
 
-#define READ 0
-#define WRITE 1
-#define TRUE 1
+#define buffer_size 10  //////
 #define FILENAME 200
-
-//Global Variables
-int indeX = 0;
-CURL *curl;
-CURLcode res = CURLE_OK;
 
 typedef struct DataModel {
     int index;
@@ -29,13 +24,184 @@ typedef struct DataModel {
     size_t len;
 }DTModel;
 
+//Global Variables
+int indeX = 0;
+CURL *curl;
+CURLcode res = CURLE_OK;
 
-//Functions Definitions
-void createItem(int i);
-void consumeItem(int i);
-void producer(int fd[2], int qtde_itens);
-void consumer(int fd[2]);
-void initString(DTModel *s);
+int qtdProduzido = 0;
+int totalEmails = 0;
+int totalConsumidos = 0;
+int buffer[buffer_size]; // regiao critica
+int bufferCounter = 0;
+int flag = 1;
+
+//definicao de funcoes
+void produtor(void *n);
+void consumidor(void *n);
+void initData(DTModel *s);
+
+//definicao dos semaforos 
+sem_t vazio;
+sem_t cheio;
+sem_t mutex;
+
+
+void imprimeBuffer(){
+
+    for(int i = 0; i < buffer_size; i++){
+        
+        printf("%d ", buffer[i]);
+        
+        if(i < 9){
+            printf("- ");
+        }
+    }
+    printf("\n");
+}
+
+size_t getData(void *ptr, size_t size, size_t nmemb, DTModel *s)
+{
+    size_t new_len = s->len + size*nmemb;
+    
+    s->ptr = realloc(s->ptr, new_len+1);
+    
+    if (s->ptr == NULL) {
+        
+        fprintf(stderr, "realloc() failed\n");
+        exit(EXIT_FAILURE);
+        
+    }
+    
+    memcpy(s->ptr+s->len, ptr, size*nmemb);
+    
+    s->ptr[new_len] = '\0';
+    s->len = new_len;
+    
+    return size*nmemb;
+}
+
+void produtor (void *n){
+    
+	while( flag ){
+        
+        //produz item
+        qtdProduzido++;
+        totalEmails--;
+        
+        sem_wait(&vazio);  //down em vazio
+		sem_wait(&mutex);    //down em mutex para bloquear regiao critica
+        
+        /*REGIAO CRITICA*/
+        
+            printf("\n------PRODUTOR------\n");
+            printf("Produziu item %d\n", qtdProduzido);
+        
+            //for(i = 0;i<100000000;i++);
+            //printf("Produtor produziu item\n");
+        
+            //insere item no buffer
+            buffer[bufferCounter] = qtdProduzido;
+            bufferCounter++;
+        
+            printf("------PRODUTOR------\n");
+
+        /*REGIAO CRITICA*/
+        
+		sem_post(&mutex);
+		sem_post(&cheio);
+        
+		sleep(1);
+        
+        
+        if(totalEmails <= 0){
+            flag = 0;
+        }
+	}
+}
+
+void consumidor(void *n){
+    int item;
+    char emailID[5];
+    
+	while( 1 ){
+        
+		sem_wait(&cheio);  //down em vazio
+		sem_wait(&mutex);    //down em mutex para bloquear regiao critica
+        
+        /*REGIAO CRITICA*/
+		
+            //remove item
+            printf("\n------CONSUMIDOR------\n");
+            printf("Consumiu item %d\n", bufferCounter-1);
+        
+            bufferCounter--;
+            item = buffer[bufferCounter];
+            buffer[bufferCounter] = 0;
+            totalConsumidos--;
+        
+        printf("\n");
+        imprimeBuffer();
+            printf("------CONSUMIDOR------\n");
+        
+        /*REGIAO CRITICA*/
+        
+		sem_post(&mutex);
+		sem_post(&vazio);
+		
+        
+        //Recupera o e-mail via IMAP com o id que foi recuperado do buffer
+        char url[100]= "imaps://imap.gmail.com:993/INBOX/;UID=";
+        sprintf(emailID, "%d", item); //Transforma o int em char
+        strcat(url, emailID);
+        
+        DTModel data;
+        initData(&data); // Inicia a struct que vai receber os dados
+        
+        
+        //Passa url montada para o curl
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        
+        //Define a funcao que vai receber os dados
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, getData);
+        
+        
+        //Escreve os dados na struct
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
+        
+        //Realiza a operação
+        res = curl_easy_perform(curl);
+        
+        if((int)res == CURLE_OK){
+            
+            char filename[200];
+            
+            //Set the filename
+            snprintf(filename, FILENAME ,"email%d.txt", item);
+            
+            //To be ensure that the filename will skip the terminator char.
+            filename[FILENAME-1]=0;
+            
+            //Open file
+            FILE* file = fopen( filename, "w");
+            
+            if(file != NULL){
+                printf("     - Consumidor criou  arquivo!\n");
+                fputs("E-mail:", file);
+                fputs(emailID, file);
+                fputs("\n\n", file);
+                fputs(data.ptr, file);
+                fclose(file);
+            }
+            
+        }
+        
+        
+        if(totalConsumidos <= 0){
+            exit(0);
+        }
+	}
+}
 
 
 void initData(DTModel *s) {
@@ -57,165 +223,19 @@ void initData(DTModel *s) {
     s->ptr[0] = '\0';
 }
 
-size_t getData(void *ptr, size_t size, size_t nmemb, DTModel *s)
-{
-     size_t new_len = s->len + size*nmemb;
-    
-     s->ptr = realloc(s->ptr, new_len+1);
-    
-     if (s->ptr == NULL) {
-         
-        fprintf(stderr, "realloc() failed\n");
-        exit(EXIT_FAILURE);
-         
-     }
-    
-     memcpy(s->ptr+s->len, ptr, size*nmemb);
-    
-     s->ptr[new_len] = '\0';
-     s->len = new_len;
-    
-     return size*nmemb;
-}
-
-void producer(int fd[2], int qtd) {
-    
-    close(fd[READ]);
-    
-    int i, bytesEscritos;
-    char emailnumber[5];
-    
-    
-    for (i = 1 ; i <= qtd; i++) {
-        
-        //Define the url to search via Curl
-        char url[100]= "imaps://imap.gmail.com:993/INBOX/;UID=";
-        sprintf(emailnumber, "%d", i);
-        strcat(url, emailnumber);
-        
-        sleep( rand() % 5 );
-        
-        //Initialize the struct that will retrieve the data
-        DTModel data;
-        initData(&data);
-
-        
-        //Logic to create the e-mail file
-        printf("\nProdutor inseriu o e-mail %d no pipe.\n", data.index);
-        
-        //Pass the url to the CURL
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        
-        //Define the function that will read the data
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, getData);
-        
-        
-        //Write the data in the struct created
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
-
-        //Perform the query
-        res = curl_easy_perform(curl);
-        
-        //printf("%d\n", data.index);
-        //printf("%s\n", data.ptr);
-        
-        /* escreve no pipe */
-        bytesEscritos = write(fd[WRITE], &data, sizeof(DTModel));
-        bytesEscritos = write(fd[WRITE], data.ptr, (strlen(data.ptr)+1));
-        
-        printf("     - Produtor escreveu os dados do e-mail no pipe.\n");
-        
-        //bytesEscritos = write(fd[WRITE], &dataWritten, sizeof(DTModel));
-        
-        if (bytesEscritos == -1) {
-            perror("Erro de escrita no pipe!");
-        }
-        
-        /* Check for errors */
-        if(res != CURLE_OK)
-            fprintf(stderr, "curl_easy_perform() failed: %s\n",
-                    curl_easy_strerror(res));
-        
-        free(data.ptr);
-        
-    }
-    close (fd[WRITE]);
-}
-
-void consumer(int fd[2]){
-    close (fd[WRITE]);
-    
-    int counter = 1;
-    char filename[200];
-    char email[1000000];
-    
-    int bytesLidos;
-    
-    while (TRUE) {
-        
-        DTModel data;
-        initData(&data);
-        
-        /* lê do pipe */
-        bytesLidos = read (fd[READ], &data, sizeof(DTModel));
-        bytesLidos = read (fd[READ], email, sizeof(email));
-
-
-        //bytesLidos = read (fd[READ], &dataReturned, sizeof(struct DataModel));
-    
-        sleep( rand() % 5 );
-        
-        //Logic to consume the value from buffer
-        printf("\n\nConsumidor pegou o e-mail %d do pipe.\n", data.index);
-        
-        //Set the filename
-        snprintf(filename, FILENAME ,"email%d.txt", counter);
-        counter++;
-        
-        //To be ensure that the filename will skip the terminator char.
-        filename[FILENAME-1]=0;
-        
-        //Open file
-        FILE* file = fopen( filename, "w");
-        
-        if(file != NULL){
-            printf("     - Consumidor criou  arquivo!\n");
-            
-            fputs("E-mail", file);
-            fprintf(file, "%d", data.index);
-            fputs("\n", file);
-            fputs(email, file);
-            //fputs(data.ptr, file);
-            fclose(file);
-        }
-        
-        printf("     - Consumidor salvou os dados no arquivo!\n");
-        
-        if (bytesLidos == -1) {
-            perror("Erro de leitura no pipe!");
-        } else if (bytesLidos == 0) {
-            break;
-        }
-    }
-    close (fd[READ]);
-}
-
-
-int main (int argc, char** argv){
-    int fd[2];
+int main(){
     char login[100];
     char senha[100];
-    int qtd;
+    pthread_t t_produtor, t_consumidor;
     
- 
+    sem_init(&mutex, 0, 1);
+    sem_init(&vazio, 0, buffer_size);
+    sem_init(&cheio, 0, 0);
     
     //Init curl
     curl = curl_easy_init();
-    
+
     if(curl) {
-        
-        /* Create Pipe  */
-        pipe (fd);
         
         printf("\n");
         
@@ -226,39 +246,31 @@ int main (int argc, char** argv){
         scanf("%s", senha);
         
         printf("Digite o numero de e-mails que deseja salvar\n");
-        scanf("%d", &qtd);
+        scanf("%d", &totalEmails);
         
+        totalConsumidos = totalEmails;
+        
+        //Inicia Buffer
+        for(int i = 0; i < buffer_size; i++){
+            buffer[i] = 0;
+        }
+        
+        printf("INIT BUFFER\n");
+        imprimeBuffer();
         
         curl_easy_setopt(curl, CURLOPT_USERNAME, login);
         curl_easy_setopt(curl, CURLOPT_PASSWORD, senha);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
         
+        //Inicia as threads
+        pthread_create(&t_produtor, NULL, (void *) produtor, NULL);
+        pthread_create(&t_consumidor, NULL, (void *) consumidor, NULL);
         
-        /* Create new Process */
-        int pid = fork();
-        
-        
-        if (pid == -1) {
-            
-            perror("Erro ao criar um novo processo!");
-            
-        } else if (pid == 0) {
-            
-            /* the new process works as a producer*/
-            producer(fd, qtd);
-            
-        } else {
-            
-            /* father process works as a consumer */
-            consumer(fd);
-        }
-        
-    
-    }else{
-        
-        printf("CURL NOT OK!\n");
+        pthread_join(t_produtor, NULL);
+        pthread_join(t_consumidor, NULL);
         
     }
     
-    return 0;
+    return EXIT_SUCCESS;
 }
+
